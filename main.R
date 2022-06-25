@@ -81,56 +81,57 @@ colSums(is.na(podaci))
 # Ovde radimo pairplot
 library(AppliedPredictiveModeling)
 #transparentTheme(trans = .4)
+
+require(corrplot)
+corrplot(cor(podaci), type='lower', method='shade')
 require(caret)
 podaci$default.payment.next.month = factor(podaci$default.payment.next.month)
 featurePlot( x=podaci[c('LIMIT_BAL','SEX','EDUCATION','MARRIAGE','AGE','PAY_6','BILL_AMT6','PAY_AMT6')], 
              y=podaci$default.payment.next.month, 
-             plot="scatter",
+             plot="pairs",
              auto.key=list(columns=2)
              )
 
 #uglavnom vidimo korelacije izmedju BILL_AMTx i BILL_AMTx-n, isto vazi i za PAY_AMTx i PAY_AMTx-n
 
-#sample = sample.split(podaci$default.payment.next.month, SplitRatio=.75) # 75% naseg dataseta bice za treniranje, ostatak za test
-#train = subset(podaci, sample==TRUE)
-#test = subset(podaci, sample==FALSE)
-#folds = createFolds(y=podaci$default.payment.next.month, k=10, list=FALSE)
-#train = podaci[folds,]
-#test = podaci[-folds,]
+what_to_keep_for_training = createDataPartition(podaci$default.payment.next.month, p = .75, list = FALSE)
+training = podaci[what_to_keep_for_training,]
+test = podaci[-what_to_keep_for_training,]
 
+# oslobodimo memoriju
+rm(data)
+rm(podaci)
+rm(what_to_keep_for_training)
+gc() 
 
-#train_scaled = scale(train)
 require(randomForest)
-#train$default.payment.next.month = as.factor(train$default.payment.next.month) # neophodno je da ova kolona bude faktor da bi randomForest radio klasifikaciju, a ne regresiju
-#random_forest_classifier = randomForest( default.payment.next.month ~ ., data=train, proximity=TRUE, importance=TRUE)
 
-#predictions = predict(random_forest_classifier, newdata = test[-24])
-
-#confusionMatrix(predictions, as.factor(test$default.payment.next.month))
 require(doParallel)
-model_training = function(modelMethod, preProcOptions=list(thresh = 0.90, k = 5, freqCut = 95/5, uniqueCut =
-                                                             10, cutoff = 0.9), controlMethod="cv", number=10, repeats=3, grid="none") {
+model_training =  function(modelMethod, preProcOptions=list(thresh = 0.9, k = 5, cutoff = 0.8), controlMethod="cv", number=10, repeats=5, tuneLength=1) {
   set.seed(42) # setujemo seed radi reproducibilnosti splitovanja
   
-  cl <- makePSOCKcluster(4) # koliko paralelnih vorkera zelimo
+  cl <- makePSOCKcluster(6) # koliko paralelnih vorkera zelimo
   
   registerDoParallel(cl)# paralelizuj workflow
   
-  control = trainControl(method=controlMethod, number=number, repeats=repeats, preProcOptions=preProcOptions, sampling="rose")
-  if(grid == "none"){
-    model <- train(as.factor(default.payment.next.month)~., data=podaci, method=modelMethod, trControl=control, allowParallel=TRUE)
-    stopCluster(cl) # ugasi paralelizaciju
-    return(model)
-  }else{
-    model <- train(as.factor(default.payment.next.month)~., data=podaci, method=modelMethod, trControl=control, tuneGrid=grid, allowParallel=TRUE)
-    stopCluster(cl) # ugasi paralelizaciju
-    return(model)
-  }
+  control = trainControl(method=controlMethod, number=number, repeats=repeats, preProcOptions=preProcOptions)
+  
+  model <- train(as.factor(default.payment.next.month)~., data=training, method=modelMethod, trControl=control, preProcess=c("pca"), tuneLenght=tuneLength, allowParallel=TRUE)
+  
+  stopCluster(cl) # ugasi paralelizaciju
+  
+  return(model)
+  
 }
 
-model_rf_cv = model_training(modelMethod = "rf", controlMethod = "repeatedcv")
-model_rf_cv
+model_rf_cv = model_training(modelMethod = "rf", controlMethod="repeatedcv")
+#nakon treninga mozemo koristiti update da setujemo finalne vrednosti parametara bez da pokrecemo ceo proces treniranja opet
+update(model_rf_cv, param = list(mtry=12))
+#vrsimo predikciju azuriranog modela nad testnim skupom
+model_rf_cv_test_predictions=predict(model_rf_cv, newdata = test)
+#prikazujemo konfuzionu matricu
+confusionMatrix(test$default.payment.next.month, model_rf_cv_test_predictions)
+
 #model_rf_oob = model_training(modelMethod="rf", controlMethod="oob")
 #model_rf_oob
 
-#nakon treninga mozemo koristiti update.train da setujemo finalne vrednosti parametara bez da pokrecemo ceo proces treniranja opet
