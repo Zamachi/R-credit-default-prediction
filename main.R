@@ -78,17 +78,19 @@ funkcija_za_ispitivanje_ispravnosti(podaci = podaci)
 colSums(is.na(podaci)) 
 #nemamo NA podataka, samim tim preskacemo brisanje missing vrednosti
 
-pairs( ~ LIMIT_BAL + SEX + EDUCATION + MARRIAGE + AGE + PAY_6 + BILL_AMT6 + PAY_AMT6, data=podaci, main="Scatterplot matrica")
-
-korelacija = cor(podaci, method=c("pearson", "kendall", "spearman"))
-require(corrplot)
-corrplot(korelacija, type = "upper", order = "hclust", 
-         tl.col = "black", tl.srt = 45) 
+# Ovde radimo pairplot
+library(AppliedPredictiveModeling)
+#transparentTheme(trans = .4)
+require(caret)
+podaci$default.payment.next.month = factor(podaci$default.payment.next.month)
+featurePlot( x=podaci[c('LIMIT_BAL','SEX','EDUCATION','MARRIAGE','AGE','PAY_6','BILL_AMT6','PAY_AMT6')], 
+             y=podaci$default.payment.next.month, 
+             plot="scatter",
+             auto.key=list(columns=2)
+             )
 
 #uglavnom vidimo korelacije izmedju BILL_AMTx i BILL_AMTx-n, isto vazi i za PAY_AMTx i PAY_AMTx-n
 
-#za podelu na trening i test koristicemo caTools alat
-require(caret)
 #sample = sample.split(podaci$default.payment.next.month, SplitRatio=.75) # 75% naseg dataseta bice za treniranje, ostatak za test
 #train = subset(podaci, sample==TRUE)
 #test = subset(podaci, sample==FALSE)
@@ -105,17 +107,30 @@ require(randomForest)
 #predictions = predict(random_forest_classifier, newdata = test[-24])
 
 #confusionMatrix(predictions, as.factor(test$default.payment.next.month))
-
-model_training = function(modelMethod, preProcOptions=list(thresh = 0.95, ICAcomp = 3, k = 5, freqCut = 95/5, uniqueCut =
+require(doParallel)
+model_training = function(modelMethod, preProcOptions=list(thresh = 0.90, k = 5, freqCut = 95/5, uniqueCut =
                                                              10, cutoff = 0.9), controlMethod="cv", number=10, repeats=3, grid="none") {
   set.seed(42) # setujemo seed radi reproducibilnosti splitovanja
-  control = trainControl(method=controlMethod, number=number, repeats=repeats)
+  
+  cl <- makePSOCKcluster(4) # koliko paralelnih vorkera zelimo
+  
+  registerDoParallel(cl)# paralelizuj workflow
+  
+  control = trainControl(method=controlMethod, number=number, repeats=repeats, preProcOptions=preProcOptions, sampling="rose")
   if(grid == "none"){
-    return(train(as.factor(default.payment.next.month)~., data=podaci, method=modelMethod, trControl=control, preProcOptions=preProcOptions, allowParallel=TRUE))
+    model <- train(as.factor(default.payment.next.month)~., data=podaci, method=modelMethod, trControl=control, allowParallel=TRUE)
+    stopCluster(cl) # ugasi paralelizaciju
+    return(model)
   }else{
-    return(train(as.factor(default.payment.next.month)~., data=podaci, method=modelMethod, trControl=control, tuneGrid=grid, preProcOptions=preProcOptions))
+    model <- train(as.factor(default.payment.next.month)~., data=podaci, method=modelMethod, trControl=control, tuneGrid=grid, allowParallel=TRUE)
+    stopCluster(cl) # ugasi paralelizaciju
+    return(model)
   }
 }
 
-model = model_training(modelMethod = "rf", controlMethod = "cv") # rf randomForest najobicniji
-model
+model_rf_cv = model_training(modelMethod = "rf", controlMethod = "repeatedcv")
+model_rf_cv
+#model_rf_oob = model_training(modelMethod="rf", controlMethod="oob")
+#model_rf_oob
+
+#nakon treninga mozemo koristiti update.train da setujemo finalne vrednosti parametara bez da pokrecemo ceo proces treniranja opet
