@@ -107,31 +107,65 @@ gc()
 require(randomForest)
 
 require(doParallel)
-model_training =  function(modelMethod, preProcOptions=list(thresh = 0.9, k = 5, cutoff = 0.8), controlMethod="cv", number=10, repeats=5, tuneLength=1) {
+model_training =  function(modelMethod, preProcOptions=list(thresh = 0.9, k = 5, cutoff = 0.8), controlMethod="cv", number=10, repeats=5, tuneLength=1, classProbs=FALSE, savePredictions=FALSE) {
   set.seed(42) # setujemo seed radi reproducibilnosti splitovanja
   
   cl <- makePSOCKcluster(6) # koliko paralelnih vorkera zelimo
   
   registerDoParallel(cl)# paralelizuj workflow
   
-  control = trainControl(method=controlMethod, number=number, repeats=repeats, preProcOptions=preProcOptions)
   
-  model <- train(as.factor(default.payment.next.month)~., data=training, method=modelMethod, trControl=control, preProcess=c("pca"), tuneLenght=tuneLength, allowParallel=TRUE)
+  model <- tryCatch({
+    if(controlMethod == "cv"){
+      control = trainControl(method=controlMethod, number=number, preProcOptions=preProcOptions, allowParallel=TRUE, classProbs = classProbs, savePredictions = savePredictions, returnResamp = "all")
+    }else{
+      control = trainControl(method=controlMethod, number=number, repeats=repeats, preProcOptions=preProcOptions, allowParallel=TRUE, classProbs = classProbs, savePredictions = savePredictions)
+    }
+    
+    return(train(
+      y=as.factor(make.names(training$default.payment.next.month)), 
+      x=training[, !(colnames(training) == "default.payment.next.month")], 
+      data=training, method=modelMethod, 
+      trControl=control, 
+      preProcess=c("pca"), 
+      tuneLenght=tuneLength
+    ))
   
-  stopCluster(cl) # ugasi paralelizaciju
+  }, 
+  error=function(cond){
+    message("Doslo je do greske\n")
+    message(cond)
+    return(NULL)
+  }, 
+  warning=function(cond){
+    message(cond)
+    return(NULL)
+  }, 
+  finally={
+    stopCluster(cl) # ugasi paralelizaciju
+  })
   
   return(model)
   
 }
 
-model_rf_cv = model_training(modelMethod = "rf", controlMethod="repeatedcv")
+model_rf_cv = model_training(modelMethod = "rf")
 #nakon treninga mozemo koristiti update da setujemo finalne vrednosti parametara bez da pokrecemo ceo proces treniranja opet
-update(model_rf_cv, param = list(mtry=12))
+update(model_rf_cv, param = list(mtry=2))
 #vrsimo predikciju azuriranog modela nad testnim skupom
-model_rf_cv_test_predictions=predict(model_rf_cv, newdata = test)
+model_rf_cv_test_predictions=predict(model_rf_cv, newdata = test[, -ncol(test)])
 #prikazujemo konfuzionu matricu
-confusionMatrix(test$default.payment.next.month, model_rf_cv_test_predictions)
+confusionMatrix(as.factor(make.names(test$default.payment.next.month)), model_rf_cv_test_predictions)
 
-#model_rf_oob = model_training(modelMethod="rf", controlMethod="oob")
-#model_rf_oob
+trellis.par.set(caretTheme())
+plot(model_rf_cv)  
 
+make.names(training$default.payment.next.month)
+model_svmPoly_cv = model_training(modelMethod = "svmPoly", savePredictions = TRUE ,tuneLength = 3)
+update(model_svmPoly_cv, param = list(degree=2,scale=0.01,C=1))
+
+model_svmPoly_cv_predictions = predict(model_svmPoly_cv, newdata=test[, -ncol(test)])
+confusionMatrix(as.factor(make.names(test$default.payment.next.month)), model_svmPoly_cv_predictions)
+
+trellis.par.set(caretTheme())
+plot(model_svmPoly_cv) 
