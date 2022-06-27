@@ -1,3 +1,9 @@
+library(AppliedPredictiveModeling)
+require(corrplot)
+require(caret)
+require(randomForest)
+require(doParallel)
+
 data = read.csv("./UCI_Credit_Card.csv")
 # class(Q) CHECK THE TYPE OF Q
 # ILI TYPEOF()
@@ -79,12 +85,9 @@ colSums(is.na(podaci))
 #nemamo NA podataka, samim tim preskacemo brisanje missing vrednosti
 
 # Ovde radimo pairplot
-library(AppliedPredictiveModeling)
 #transparentTheme(trans = .4)
 
-require(corrplot)
 corrplot(cor(podaci), type='lower', method='shade')
-require(caret)
 podaci$default.payment.next.month = factor(podaci$default.payment.next.month)
 featurePlot( x=podaci[c('LIMIT_BAL','SEX','EDUCATION','MARRIAGE','AGE','PAY_6','BILL_AMT6','PAY_AMT6')], 
              y=podaci$default.payment.next.month, 
@@ -104,9 +107,6 @@ rm(podaci)
 rm(what_to_keep_for_training)
 gc() 
 
-require(randomForest)
-
-require(doParallel)
 model_training =  function(modelMethod, preProcOptions=list(thresh = 0.9, k = 5, cutoff = 0.8), controlMethod="cv", number=10, repeats=5, tuneLength=1, classProbs=FALSE, savePredictions=FALSE) {
   set.seed(42) # setujemo seed radi reproducibilnosti splitovanja
   
